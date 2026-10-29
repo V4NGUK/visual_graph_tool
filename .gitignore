@@ -1,0 +1,17 @@
+/build/
+/build-*/
+/.vs/
+/.vscode/
+*.exe
+*.dll
+*.lib
+*.obj
+*.o
+*.pdb
+*.ilk
+*.svg
+*.zip
+*.7z
+*.log
+Thumbs.db
+.DS_Store
