@@ -29,6 +29,8 @@ bool set_flag(Config& config, const std::string& name) {
         config.ascii = true;
     } else if (name == "--help" || name == "-h") {
         config.help = true;
+    } else if (name == "--direct") {
+        config.direct = true;
     } else {
         return false;
     }
@@ -89,7 +91,7 @@ void print_config(const Config& config, std::ostream& output) {
 
 void print_help(std::ostream& output) {
     output << R"(Инструмент визуализации графа зависимостей npm
-Вариант 8. Этап 2: получение прямых зависимостей npm.
+Вариант 8. Этапы 2 и 3: прямые зависимости и рекурсивный BFS.
 
 Запуск: visual_graph_tool --package ИМЯ --version ВЕРСИЯ [опции]
 
@@ -101,10 +103,12 @@ void print_help(std::ostream& output) {
   --output ФАЙЛ       Имя изображения SVG; по умолчанию: graph.svg.
   --ascii             Включить режим ASCII-дерева.
   --filter ПОДСТРОКА  Подстрока исключаемых пакетов; по умолчанию пустая.
+  --direct            Вывести только прямые зависимости, как на этапе 2.
   --help, -h          Показать справку.
 
 Значения можно задавать через пробел или =. Флаги значений не принимают.
-Выводятся зависимости из поля dependencies указанной версии пакета.
+По умолчанию выводятся граф и порядок BFS. --direct включает вывод этапа 2.
+Обрабатывается поле dependencies; devDependencies и peerDependencies не обходятся.
 Изображение и ASCII-дерево появятся на этапе 5.
 )";
 }

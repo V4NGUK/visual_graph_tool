@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(visual_graph_tool VERSION 0.2.0 LANGUAGES CXX)
+project(visual_graph_tool VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,7 +13,8 @@ endif()
 
 add_library(graph_config src/cli.cpp src/validation.cpp)
 target_include_directories(graph_config PUBLIC src)
-add_library(graph_data src/json.cpp src/http.cpp src/repository.cpp)
+add_library(graph_data src/json.cpp src/http.cpp src/repository.cpp
+    src/semver.cpp src/resolution.cpp src/graph.cpp)
 target_include_directories(graph_data PUBLIC src)
 if(WIN32)
     target_compile_definitions(graph_data PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -35,6 +36,13 @@ if(BUILD_TESTING)
     target_link_libraries(data_tests PRIVATE graph_data)
     add_test(NAME data_tests COMMAND data_tests)
     set_tests_properties(data_tests PROPERTIES WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    add_executable(graph_tests tests/test_graph.cpp)
+    target_link_libraries(graph_tests PRIVATE graph_data)
+    add_test(NAME graph_tests COMMAND graph_tests)
+    set_tests_properties(graph_tests PROPERTIES WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    add_executable(semver_tests tests/test_semver.cpp)
+    target_link_libraries(semver_tests PRIVATE graph_data)
+    add_test(NAME semver_tests COMMAND semver_tests)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME cli_contract COMMAND "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tests/test_cli.py"

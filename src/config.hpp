@@ -15,6 +15,7 @@ struct Config {
     bool ascii = false;
     std::string filter;
     bool help = false;
+    bool direct = false;
 };
 
 Config parse_arguments(const std::vector<std::string>& arguments);

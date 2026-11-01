@@ -1,6 +1,7 @@
 import http.server
 import json
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import threading
@@ -75,7 +76,7 @@ class CliTests(unittest.TestCase):
 
     def npm(self, name='chalk', version='4.1.2', suffix=''):
         return self.invoke('--package', name, '--version', version,
-                           '--repository', self.url + suffix)
+                           '--repository', self.url + suffix, '--direct')
 
     def test_direct_dependencies(self):
         result = self.npm()
@@ -115,7 +116,8 @@ class CliTests(unittest.TestCase):
         file = self.directory / 'граф с пробелами.json'
         file.write_text('{"A":["B"],"B":[]}', encoding='utf-8')
         result = self.invoke('--package', 'A', '--version', '1.0.0',
-                             '--test-mode', '--repository', str(file))
+                             '--test-mode', '--repository', str(file),
+                             '--direct')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('B=1.0.0', result.stdout)
 
@@ -136,6 +138,63 @@ class CliTests(unittest.TestCase):
         result = self.invoke('--package', 'chalk', '--version', 'invalid')
         self.assertEqual(result.returncode, 2)
         self.assertIn('--version', result.stderr)
+        self.assertEqual(self.invoke('--direct=false').returncode, 2)
+
+    def test_unavailable_registry(self):
+        with socket.socket() as reserved:
+            reserved.bind(('127.0.0.1', 0))
+            port = reserved.getsockname()[1]
+            result = self.invoke('--package', 'chalk', '--version', '4.1.2',
+                                 '--repository', f'http://127.0.0.1:{port}')
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, '')
+        self.assertTrue(result.stderr)
+
+    def graph(self, file, *arguments):
+        return self.invoke('--package', 'A', '--version', '1.0.0',
+                           '--test-mode', '--repository',
+                           str(ROOT / 'examples' / file), *arguments)
+
+    def test_recursive_bfs_and_diamond(self):
+        result = self.graph('branching.json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('nodes=4\nedges=4\n', result.stdout)
+        self.assertIn('bfs=A@1.0.0,B@1.0.0,C@1.0.0,D@1.0.0', result.stdout)
+
+    def test_cycles_and_isolated_vertices(self):
+        for file, nodes, edges in [('cycle.json', 3, 3),
+                                   ('self-loop.json', 1, 1),
+                                   ('isolated.json', 1, 0)]:
+            with self.subTest(file=file):
+                result = self.graph(file)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f'nodes={nodes}\nedges={edges}', result.stdout)
+
+    def test_filter(self):
+        result = self.graph('branching.json', '--filter', 'B')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('nodes=3\nedges=2', result.stdout)
+        self.assertNotIn('B@1.0.0', result.stdout)
+        self.assertIn('D@1.0.0', result.stdout)
+
+    def test_filtered_root_does_not_contact_registry(self):
+        result = self.invoke('--package', 'absent', '--version', '1.0.0',
+                             '--repository', self.url, '--filter', 'abs')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('nodes=0\nedges=0', result.stdout)
+
+    def test_npm_graph_from_local_http_metadata(self):
+        result = self.invoke('--package', 'chalk', '--version', '4.1.2',
+                             '--repository', self.url)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('nodes=6\nedges=5', result.stdout)
+        self.assertIn('color-name@1.1.4 -> -', result.stdout)
+
+    def test_stage_five_outputs_are_not_created(self):
+        output = self.directory / 'граф.svg'
+        result = self.graph('cycle.json', '--ascii', '--output', str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(output.exists())
 
 
 if __name__ == '__main__':

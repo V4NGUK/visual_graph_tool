@@ -25,10 +25,12 @@ class NpmRepository {
 public:
     explicit NpmRepository(std::string url, Fetch fetch = http_get);
     Package exact(const std::string& name, const std::string& version);
+    Package resolve(const std::string& name, const std::string& requirement);
 
 private:
     std::string url_;
     Fetch fetch_;
+    std::map<std::string, Json> cache_;
 };
 
 class TestRepository {
