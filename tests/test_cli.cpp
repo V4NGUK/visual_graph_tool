@@ -296,7 +296,7 @@ std::string unavailable_url(Socket& reserved) {
 Result npm(const Cli& app, const std::string& url, const std::string& name = "chalk",
            const std::string& version = "4.1.2", const std::string& suffix = "") {
     Arguments arguments = {"--package", name, "--version", version};
-    arguments.insert(arguments.end(), {"--repository", url + suffix});
+    arguments.insert(arguments.end(), {"--repository", url + suffix, "--direct"});
     return app.run(arguments);
 }
 
@@ -325,7 +325,7 @@ void data_cli_tests(TestSuite& suite, const Cli& app, const std::string& url) {
     suite.run("CLI local repository and Unicode path", [&] {
         const auto file = app.write("граф с пробелами.json", R"({"A":["B"],"B":[]})");
         const auto result = app.run({"--package", "A", "--version", "1.0.0",
-                                    "--test-mode", "--repository", file.u8string()});
+                                    "--test-mode", "--repository", file.u8string(), "--direct"});
         contains(result, "B=1.0.0");
     });
     suite.run("CLI invalid repositories", [&] {
@@ -341,6 +341,52 @@ void data_cli_tests(TestSuite& suite, const Cli& app, const std::string& url) {
     });
 }
 
+Result graph(const Cli& app, const std::string& package, const Arguments& extra = {}) {
+    Arguments arguments = {"--package", package, "--version", "1.0.0", "--test-mode", "--repository",
+                           (app.source / "examples/repository.json").u8string()};
+    arguments.insert(arguments.end(), extra.begin(), extra.end());
+    return app.run(arguments);
+}
+
+void graph_cli_tests(TestSuite& suite, const Cli& app, const std::string& url) {
+    suite.run("CLI unavailable registry", [&] {
+        Socket reserved(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
+        failure(app.run({"--package", "chalk", "--version", "4.1.2", "--repository", unavailable_url(reserved)}));
+    });
+    suite.run("CLI BFS and shared dependencies", [&] {
+        const auto result = graph(app, "A");
+        contains(result, "nodes=4\nedges=4\n");
+        contains(result, "bfs=A@1.0.0,B@1.0.0,C@1.0.0,D@1.0.0");
+    });
+    suite.run("CLI cycles, loops and isolated packages", [&] {
+        contains(graph(app, "X"), "nodes=3\nedges=3\n");
+        contains(graph(app, "S"), "nodes=1\nedges=1\n");
+        contains(graph(app, "I"), "nodes=1\nedges=0\n");
+    });
+    suite.run("CLI filter", [&] {
+        const auto result = graph(app, "A", {"--filter", "B"});
+        contains(result, "nodes=3\nedges=2\n");
+        contains(result, "D@1.0.0");
+        check(result.output.find("B@1.0.0") == std::string::npos, "Filtered package remained");
+        failure(app.run({"--direct=false"}), "--direct");
+    });
+    suite.run("CLI filtered root does not contact registry", [&] {
+        const auto result = app.run({"--package", "absent", "--version", "1.0.0",
+                                     "--repository", url, "--filter", "abs"});
+        contains(result, "nodes=0\nedges=0\n");
+    });
+    suite.run("CLI full npm graph", [&] {
+        const auto result = app.run({"--package", "chalk", "--version", "4.1.2", "--repository", url});
+        contains(result, "nodes=6\nedges=5\n");
+        contains(result, "color-name@1.1.4 -> -");
+    });
+    suite.run("CLI stage 5 output is not created", [&] {
+        const auto output = app.directory / fs::u8path("граф.svg");
+        success(graph(app, "X", {"--ascii", "--output", output.u8string()}));
+        check(!fs::exists(output), "Unexpected SVG output");
+    });
+}
+
 int wmain(int argc, wchar_t* argv[]) {
     try {
         check(argc == 3, "Expected executable and source paths");
@@ -348,6 +394,7 @@ int wmain(int argc, wchar_t* argv[]) {
         TestSuite suite;
         Registry registry;
         data_cli_tests(suite, app, registry.url());
+        graph_cli_tests(suite, app, registry.url());
         return suite.finish();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

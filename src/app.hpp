@@ -1,8 +1,12 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <iosfwd>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,6 +21,7 @@ struct Config {
     bool ascii = false;
     std::string filter;
     bool help = false;
+    bool direct = false;
 };
 
 Config parse_arguments(const std::vector<std::string>& arguments);
@@ -57,10 +62,12 @@ class NpmRepository {
 public:
     explicit NpmRepository(std::string url, Fetch fetch = http_get);
     Package exact(const std::string& name, const std::string& version);
+    Package resolve(const std::string& name, const std::string& requirement);
 
 private:
     std::string url_;
     Fetch fetch_;
+    std::map<std::string, Json> cache_;
 };
 
 class TestRepository {
@@ -71,5 +78,46 @@ public:
 private:
     std::map<std::string, std::vector<std::string>> packages_;
 };
+
+struct Version {
+    std::array<std::uint64_t, 3> parts{};
+    std::vector<std::string> prerelease;
+};
+
+std::optional<Version> parse_version(const std::string& text);
+int compare_versions(const Version& left, const Version& right);
+
+struct Comparator {
+    std::string operation;
+    Version version;
+};
+
+class VersionRange {
+public:
+    explicit VersionRange(const std::string& text);
+    bool matches(const Version& version) const;
+
+private:
+    std::vector<std::vector<Comparator>> alternatives_;
+};
+
+using Resolve = std::function<Package(const std::string&, const std::string&)>;
+
+struct GraphLimits {
+    std::size_t max_nodes = 10000;
+    std::size_t max_depth = 512;
+};
+
+struct DependencyGraph {
+    std::string root;
+    std::vector<std::string> order;
+    std::map<std::string, std::vector<std::string>> edges;
+};
+
+std::string package_id(const Package& package);
+bool excluded(const std::string& name, const std::string& filter);
+DependencyGraph build_graph(const Package& root, Resolve resolve,
+                            const std::string& filter = "", GraphLimits limits = {});
+void print_graph(const DependencyGraph& graph, std::ostream& output);
 
 }

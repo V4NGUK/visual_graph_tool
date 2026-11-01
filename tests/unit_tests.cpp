@@ -271,6 +271,180 @@ void metadata_tests(TestSuite& suite) {
     });
 }
 
+using namespace graph_tool;
+
+DependencyGraph test_graph(const std::string& package, const std::string& filter = "", GraphLimits limits = {}) {
+    TestRepository repository("examples/repository.json");
+    return build_graph(repository.exact(package, "1.0.0"), [&](const auto& name, const auto& version) {
+        return repository.exact(name, version);
+    }, filter, limits);
+}
+
+void traversal_tests(TestSuite& suite) {
+    suite.run("recursive BFS visits shared dependencies once", [] {
+        const auto graph = test_graph("A");
+        const std::vector<std::string> expected = {"A@1.0.0", "B@1.0.0", "C@1.0.0", "D@1.0.0"};
+        check(graph.order == expected, "Incorrect BFS order");
+        check(graph.edges.at("B@1.0.0") == graph.edges.at("C@1.0.0"), "Shared edge lost");
+    });
+    suite.run("cycles terminate and preserve back edges", [] {
+        const auto graph = test_graph("X");
+        check(graph.order.size() == 3, "Cycle was revisited");
+        check(graph.edges.at("Z@1.0.0") == std::vector<std::string>{"X@1.0.0"}, "Back edge lost");
+    });
+    suite.run("self loops and duplicate edges", [] {
+        const auto graph = test_graph("S");
+        check(graph.order.size() == 1 && graph.edges.at("S@1.0.0").size() == 1, "Loop duplicated");
+    });
+    suite.run("unreachable packages are not included", [] {
+        check(test_graph("I").order.size() == 1, "Unreachable vertex included");
+    });
+    suite.run("filter removes matching packages and their unique descendants", [] {
+        const auto graph = test_graph("X", "Y");
+        check(graph.order.size() == 1 && graph.edges.at("X@1.0.0").empty(), "Filtered node included");
+        check(test_graph("A", "B").order.size() == 3, "Reachable node removed");
+        check(test_graph("A", "A").order.empty(), "Filtered root included");
+    });
+    suite.run("depth and node limits fail instead of truncating", [] {
+        expect_error([] { test_graph("X", "", {2, 10}); });
+        expect_error([] { test_graph("X", "", {10, 1}); });
+    });
+}
+
+void identity_tests(TestSuite& suite) {
+    suite.run("multiple versions have distinct vertices", [] {
+        const Package root{"A", "1.0.0", {{"B", "1.0.0"}, {"C", "1.0.0"}}};
+        const auto graph = build_graph(root, [](const auto& name, const auto& version) {
+            if (name == "B") return Package{name, version, {{"D", "1.0.0"}}};
+            if (name == "C") return Package{name, version, {{"D", "2.0.0"}}};
+            return Package{name, version, {}};
+        });
+        check(graph.order.size() == 5, "Different versions were merged");
+        check(graph.edges.count("D@1.0.0") && graph.edges.count("D@2.0.0"), "Missing version");
+    });
+    suite.run("filtered dependency is never requested", [] {
+        const auto graph = build_graph({"A", "1.0.0", {{"BLOCK", "1.0.0"}}},
+            [](const auto&, const auto&) -> Package {
+                throw std::runtime_error("Filtered dependency requested");
+            }, "LOC");
+        check(graph.order.size() == 1, "Filter does not match substrings");
+    });
+    suite.run("shared dependency is resolved once for an identical request", [] {
+        int calls = 0;
+        const auto graph = build_graph({"A", "1.0.0", {{"B", "1.0.0"}, {"C", "1.0.0"}}},
+            [&](const auto& name, const auto& version) {
+                if (name == "D") {
+                    ++calls;
+                    return Package{name, version, {}};
+                }
+                return Package{name, version, {{"D", "1.0.0"}}};
+            });
+        check(graph.order.size() == 4 && calls == 1, "Shared package was fetched twice");
+    });
+}
+
+void resolution_tests(TestSuite& suite) {
+    suite.run("highest matching version, tags, aliases and metadata cache", [] {
+        int requests = 0;
+        NpmRepository repository("https://example.test", [&](const std::string& url) {
+            ++requests;
+            check(url == "https://example.test/x", "Alias package not resolved");
+            return R"({"name":"x","dist-tags":{"next":"2.0.0-beta.1"},"versions":{
+                "1.2.0":{"name":"x","version":"1.2.0"},
+                "1.10.0":{"name":"x","version":"1.10.0"},
+                "2.0.0-beta.1":{"name":"x","version":"2.0.0-beta.1"},
+                "2.0.0":{"name":"x","version":"2.0.0"}}})";
+        });
+        check(repository.resolve("x", "^1").version == "1.10.0", "Wrong semantic sort");
+        check(repository.resolve("x", "next").version == "2.0.0-beta.1", "Tag resolution failed");
+        check(repository.resolve("alias", "npm:x@~1.2").version == "1.2.0", "Alias resolution failed");
+        check(requests == 1, "Packument cache missed");
+        expect_error([&] { repository.resolve("x", "^9"); });
+        expect_error([&] { repository.resolve("x", "file:../x"); });
+    });
+}
+
+void npm_graph_test(TestSuite& suite) {
+    suite.run("actual chalk metadata traversed without network", [] {
+        NpmRepository repository("https://example.test", [](const std::string& url) {
+            const auto name = url.substr(url.rfind('/') + 1);
+            return metadata_versions(name);
+        });
+        const auto root = repository.resolve("chalk", "4.1.2");
+        const auto graph = build_graph(root, [&](const auto& name, const auto& range) {
+            return repository.resolve(name, range);
+        });
+        std::ostringstream output;
+        print_graph(graph, output);
+        check(output.str().find("nodes=6\nedges=5") != std::string::npos, "Wrong npm graph");
+        check(graph.order[4] == "has-flag@4.0.0", "Traversal is not breadth first");
+    });
+}
+
+using namespace graph_tool;
+using Case = std::tuple<std::string, std::string, bool>;
+
+void range_tests(TestSuite& suite) {
+    const std::vector<Case> cases = {
+        {"1.2.3", "1.2.3", true}, {"1.2.4", "1.2.3", false},
+        {"1.9.9", "^1.2.3", true}, {"2.0.0", "^1.2.3", false},
+        {"0.2.9", "^0.2.3", true}, {"0.3.0", "^0.2.3", false},
+        {"0.0.3", "^0.0.3", true}, {"0.0.4", "^0.0.3", false},
+        {"0.9.0", "^0", true}, {"1.0.0", "^0", false},
+        {"0.0.9", "^0.0", true}, {"0.1.0", "^0.0", false},
+        {"1.2.9", "~1.2.3", true}, {"1.3.0", "~1.2.3", false},
+        {"1.9.9", "~1", true}, {"2.0.0", "~1", false},
+        {"1.2.9", "1.2.x", true}, {"1.3.0", "1.2", false},
+        {"1.9.0", "1", true}, {"2.0.0", "1.*", false},
+        {"9.0.0", "*", true}, {"9.0.0", "", true},
+        {"1.3.0", ">1.2", true}, {"1.2.9", ">1.2", false},
+        {"1.2.9", "<=1.2", true}, {"1.3.0", "<=1.2", false},
+        {"1.2.0", ">=1.2 <2.0.0", true}, {"2.0.0", ">=1.2 <2.0.0", false},
+        {"1.2.0", "1.2 - 2.3", true}, {"2.3.9", "1.2 - 2.3", true},
+        {"2.4.0", "1.2 - 2.3", false}, {"2.3.4", "1.2.3 - 2.3.4", true},
+        {"2.3.5", "1.2.3 - 2.3.4", false}, {"3.0.0", "1.x || >=3", true},
+        {"2.0.0", "1.x || >=3", false}, {"1.2.3", ">= 1.2.0 < 2.0.0", true},
+        {"1.2.3-beta.2", "^1.2.3-beta.1", true}, {"1.2.4-beta.1", "^1.2.3-beta.1", false},
+        {"1.2.3-beta.1", "*", false}, {"1.2.3+build.001", "=1.2.3", true},
+        {"1.2.3", "v1.2.3", true}, {"1.0.0", ">*", false},
+        {"0.0.0", "<*", false}, {"0.0.0", ">=*", true},
+        {"1.2.3-beta.1", "1.2.3-beta.1", true}, {"1.2.3", "~1.2", true}
+    };
+    for (const auto& entry : cases) {
+        suite.run(std::get<0>(entry) + " in " + std::get<1>(entry), [&] {
+            const auto version = parse_version(std::get<0>(entry));
+            check(version.has_value(), "Valid version rejected");
+            check(VersionRange(std::get<1>(entry)).matches(*version) == std::get<2>(entry), "Wrong match");
+        });
+    }
+}
+
+void precedence_tests(TestSuite& suite) {
+    const std::vector<std::string> ordered = {
+        "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
+        "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0", "2.0.0"
+    };
+    for (std::size_t index = 1; index < ordered.size(); ++index) {
+        suite.run("precedence " + ordered[index], [&] {
+            check(compare_versions(*parse_version(ordered[index - 1]), *parse_version(ordered[index])) < 0,
+                  "Incorrect prerelease precedence");
+        });
+    }
+    suite.run("build metadata does not change precedence", [] {
+        check(compare_versions(*parse_version("1.0.0+a"), *parse_version("1.0.0+b")) == 0, "Build compared");
+    });
+    for (const auto value : {"01.0.0", "1.0.0-01", "1.0", "v1.0.0", "1.0.0+", "99999999999999999999999.0.0"}) {
+        suite.run("invalid version " + std::string(value), [=] {
+            check(!parse_version(value), "Invalid version accepted");
+        });
+    }
+    for (const auto value : {"file:../a", "git+https://host/a", "latest", "^", "1.x.3", "1..2", "=>1.0.0"}) {
+        suite.run("invalid range " + std::string(value), [=] {
+            expect_error([&] { VersionRange range(value); });
+        });
+    }
+}
+
 int main() {
     TestSuite suite;
     Fixture fixture;
@@ -281,5 +455,11 @@ int main() {
     test_parser_errors(suite);
     json_tests(suite);
     metadata_tests(suite);
+    traversal_tests(suite);
+    identity_tests(suite);
+    resolution_tests(suite);
+    npm_graph_test(suite);
+    range_tests(suite);
+    precedence_tests(suite);
     return suite.finish();
 }

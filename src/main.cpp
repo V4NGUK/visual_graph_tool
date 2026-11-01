@@ -9,22 +9,47 @@
 
 namespace {
 
-void process(const graph_tool::Config& config) {
-    if (config.help) {
-        graph_tool::print_help(std::cout);
-    } else if (config.test_mode) {
-        graph_tool::TestRepository repository(config.repository);
-        graph_tool::print_dependencies(repository.exact(config.package, config.version), std::cout);
+using namespace graph_tool;
+
+void show_result(const Config& config, const Package& root, const Resolve& resolve) {
+    if (config.direct) {
+        print_dependencies(root, std::cout);
     } else {
-        graph_tool::NpmRepository repository(config.repository);
-        graph_tool::print_dependencies(repository.exact(config.package, config.version), std::cout);
+        print_graph(build_graph(root, resolve, config.filter), std::cout);
+    }
+}
+
+void analyze_test_file(const Config& config) {
+    TestRepository repository(config.repository);
+    const auto root = repository.exact(config.package, config.version);
+    show_result(config, root, [&](const std::string& name, const std::string& version) {
+        return repository.exact(name, version);
+    });
+}
+
+void analyze_npm(const Config& config) {
+    NpmRepository repository(config.repository);
+    const auto root = repository.exact(config.package, config.version);
+    show_result(config, root, [&](const std::string& name, const std::string& range) {
+        return repository.resolve(name, range);
+    });
+}
+
+void process(const Config& config) {
+    if (config.help) {
+        print_help(std::cout);
+    } else if (!config.direct && excluded(config.package, config.filter)) {
+        print_graph({config.package + '@' + config.version, {}, {}}, std::cout);
+    } else if (config.test_mode) {
+        analyze_test_file(config);
+    } else {
+        analyze_npm(config);
     }
 }
 
 int run(const std::vector<std::string>& arguments) {
     try {
-        const auto config = graph_tool::parse_arguments(arguments);
-        process(config);
+        process(parse_arguments(arguments));
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Ошибка: " << error.what() << '\n'
