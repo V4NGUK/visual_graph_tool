@@ -1,0 +1,7 @@
+{
+  "name": "ansi-styles",
+  "version": "4.3.0",
+  "dependencies": {
+    "color-convert": "^2.0.1"
+  }
+}

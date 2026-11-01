@@ -1,0 +1,7 @@
+{
+  "name": "color-convert",
+  "version": "2.0.1",
+  "dependencies": {
+    "color-name": "~1.1.4"
+  }
+}

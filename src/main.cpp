@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include "repository.hpp"
 
 #include <exception>
 #include <iostream>
@@ -9,14 +10,22 @@
 
 namespace {
 
+void process(const graph_tool::Config& config) {
+    if (config.help) {
+        graph_tool::print_help(std::cout);
+    } else if (config.test_mode) {
+        graph_tool::TestRepository repository(config.repository);
+        graph_tool::print_dependencies(repository.exact(config.package, config.version), std::cout);
+    } else {
+        graph_tool::NpmRepository repository(config.repository);
+        graph_tool::print_dependencies(repository.exact(config.package, config.version), std::cout);
+    }
+}
+
 int run(const std::vector<std::string>& arguments) {
     try {
         const auto config = graph_tool::parse_arguments(arguments);
-        if (config.help) {
-            graph_tool::print_help(std::cout);
-        } else {
-            graph_tool::print_config(config, std::cout);
-        }
+        process(config);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Ошибка: " << error.what() << '\n'

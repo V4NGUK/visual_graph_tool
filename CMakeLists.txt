@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(visual_graph_tool VERSION 0.1.0 LANGUAGES CXX)
+project(visual_graph_tool VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,9 +13,15 @@ endif()
 
 add_library(graph_config src/cli.cpp src/validation.cpp)
 target_include_directories(graph_config PUBLIC src)
+add_library(graph_data src/json.cpp src/http.cpp src/repository.cpp)
+target_include_directories(graph_data PUBLIC src)
+if(WIN32)
+    target_compile_definitions(graph_data PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(graph_data PRIVATE winhttp)
+endif()
 
 add_executable(visual_graph_tool src/main.cpp)
-target_link_libraries(visual_graph_tool PRIVATE graph_config)
+target_link_libraries(visual_graph_tool PRIVATE graph_config graph_data)
 if(MINGW)
     target_link_options(visual_graph_tool PRIVATE -municode)
 endif()
@@ -25,8 +31,12 @@ if(BUILD_TESTING)
     add_executable(config_tests tests/test_config.cpp)
     target_link_libraries(config_tests PRIVATE graph_config)
     add_test(NAME config_tests COMMAND config_tests)
-    add_test(NAME cli_contract COMMAND ${CMAKE_COMMAND}
-        "-DAPP=$<TARGET_FILE:visual_graph_tool>"
-        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
-        -P "${PROJECT_SOURCE_DIR}/tests/check_cli.cmake")
+    add_executable(data_tests tests/test_data.cpp)
+    target_link_libraries(data_tests PRIVATE graph_data)
+    add_test(NAME data_tests COMMAND data_tests)
+    set_tests_properties(data_tests PROPERTIES WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME cli_contract COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/test_cli.py"
+        "$<TARGET_FILE:visual_graph_tool>" "${PROJECT_SOURCE_DIR}")
 endif()
