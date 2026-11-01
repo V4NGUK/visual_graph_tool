@@ -1,0 +1,60 @@
+{
+  "sources": {
+    "chalk": "https://registry.npmjs.org/chalk/4.1.2",
+    "ansi-styles": "https://registry.npmjs.org/ansi-styles/4.3.0",
+    "supports-color": "https://registry.npmjs.org/supports-color/7.2.0",
+    "color-convert": "https://registry.npmjs.org/color-convert/2.0.1",
+    "color-name": "https://registry.npmjs.org/color-name/1.1.4",
+    "has-flag": "https://registry.npmjs.org/has-flag/4.0.0",
+    "is-number": "https://registry.npmjs.org/is-number/7.0.0",
+    "@types/is-number": "https://registry.npmjs.org/@types%2Fis-number/7.0.5"
+  },
+  "packages": {
+    "chalk": {
+      "name": "chalk",
+      "version": "4.1.2",
+      "dependencies": {
+        "ansi-styles": "^4.1.0",
+        "supports-color": "^7.1.0"
+      }
+    },
+    "ansi-styles": {
+      "name": "ansi-styles",
+      "version": "4.3.0",
+      "dependencies": {
+        "color-convert": "^2.0.1"
+      }
+    },
+    "supports-color": {
+      "name": "supports-color",
+      "version": "7.2.0",
+      "dependencies": {
+        "has-flag": "^4.0.0"
+      }
+    },
+    "color-convert": {
+      "name": "color-convert",
+      "version": "2.0.1",
+      "dependencies": {
+        "color-name": "~1.1.4"
+      }
+    },
+    "color-name": {
+      "name": "color-name",
+      "version": "1.1.4"
+    },
+    "has-flag": {
+      "name": "has-flag",
+      "version": "4.0.0"
+    },
+    "is-number": {
+      "name": "is-number",
+      "version": "7.0.0"
+    },
+    "@types/is-number": {
+      "name": "@types/is-number",
+      "version": "7.0.5",
+      "dependencies": {}
+    }
+  }
+}

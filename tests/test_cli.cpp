@@ -1,3 +1,5 @@
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 
 #include "test_support.hpp"
@@ -138,28 +140,204 @@ void contains(const Result& result, const std::string& text) {
     check(result.output.find(text) != std::string::npos, "Missing output: " + text);
 }
 
-void config_cli_tests(TestSuite& suite, const Cli& app) {
-    suite.run("default CLI configuration", [&] {
-        const auto result = app.run({"--package", "express", "--version", "4.18.2"});
+#include <atomic>
+#include <sstream>
+
+struct Winsock {
+    Winsock() {
+        WSADATA data{};
+        check(WSAStartup(MAKEWORD(2, 2), &data) == 0, "Cannot start Winsock");
+    }
+
+    ~Winsock() {
+        WSACleanup();
+    }
+};
+
+struct Socket {
+    SOCKET value;
+
+    explicit Socket(SOCKET socket) : value(socket) {
+        check(value != INVALID_SOCKET, "Cannot create socket");
+    }
+
+    ~Socket() {
+        closesocket(value);
+    }
+
+    Socket(const Socket&) = delete;
+    Socket& operator=(const Socket&) = delete;
+};
+
+class Registry {
+public:
+    Registry() : listener_(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) {
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        check(bind(listener_.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "Bind failed");
+        int length = sizeof(address);
+        check(getsockname(listener_.value, reinterpret_cast<sockaddr*>(&address), &length) == 0, "Port not found");
+        port_ = ntohs(address.sin_port);
+        check(listen(listener_.value, SOMAXCONN) == 0, "Listen failed");
+        saved_packages();
+        worker_ = std::thread([this] { serve(); });
+    }
+
+    ~Registry() {
+        running_ = false;
+        worker_.join();
+    }
+
+    std::string url() const {
+        return "http://127.0.0.1:" + std::to_string(port_);
+    }
+
+private:
+    Winsock winsock_;
+    Socket listener_;
+    unsigned short port_ = 0;
+    std::atomic<bool> running_{true};
+    std::thread worker_;
+
+    std::string decode(std::string name) const {
+        std::size_t position = 0;
+        while ((position = name.find('%', position)) != std::string::npos) {
+            check(position + 2 < name.size(), "Invalid URL escape");
+            const char character = static_cast<char>(std::stoi(name.substr(position + 1, 2), nullptr, 16));
+            name.replace(position, 3, 1, character);
+            ++position;
+        }
+        return name;
+    }
+
+    std::pair<int, std::string> response(std::string path) const {
+        std::string mode;
+        path.erase(0, 1);
+        for (const std::string prefix : {"error", "broken", "wrong", "npm"}) {
+            if (path.rfind(prefix + '/', 0) == 0) {
+                mode = prefix;
+                path.erase(0, prefix.size() + 1);
+                break;
+            }
+        }
+        if (mode == "error") return {503, "{}"};
+        const auto slash = path.find('/');
+        const auto name = decode(path.substr(0, slash));
+        const auto metadata = saved_packages().find(name);
+        if (!metadata) return {404, "{}"};
+        if (slash == std::string::npos) return {200, metadata_versions(name)};
+        const auto version = decode(path.substr(slash + 1));
+        if (version != metadata->as_object().at("version").as_string()) return {404, "{}"};
+        if (mode == "broken") return {200, "{"};
+        if (mode == "wrong") {
+            auto document = *metadata;
+            document.members.at("version").text = "999.0.0";
+            return {200, json_text(document)};
+        }
+        return {200, metadata_text(name)};
+    }
+
+    void answer(SOCKET client) const {
+        DWORD timeout = 3000;
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+        std::string request;
+        char buffer[4096];
+        while (request.find("\r\n\r\n") == std::string::npos && request.size() < 16384) {
+            const int received = recv(client, buffer, sizeof(buffer), 0);
+            if (received <= 0) return;
+            request.append(buffer, received);
+        }
+        std::istringstream input(request);
+        std::string method, path;
+        input >> method >> path;
+        if (method != "GET" || path.empty()) return;
+        const auto [status, body] = response(path);
+        const auto reply = "HTTP/1.1 " + std::to_string(status) + " Test\r\nContent-Type: application/json\r\n"
+            "Connection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+        std::size_t sent = 0;
+        while (sent < reply.size()) {
+            const int count = send(client, reply.data() + sent, static_cast<int>(reply.size() - sent), 0);
+            if (count <= 0) return;
+            sent += count;
+        }
+    }
+
+    void serve() {
+        while (running_) {
+            fd_set sockets;
+            FD_ZERO(&sockets);
+            FD_SET(listener_.value, &sockets);
+            timeval timeout{0, 100000};
+            if (select(0, &sockets, nullptr, nullptr, &timeout) <= 0) continue;
+            const auto accepted = accept(listener_.value, nullptr, nullptr);
+            if (accepted == INVALID_SOCKET) continue;
+            Socket client(accepted);
+            try {
+                answer(client.value);
+            } catch (const std::exception&) {
+                shutdown(client.value, SD_BOTH);
+            }
+        }
+    }
+};
+
+std::string unavailable_url(Socket& reserved) {
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    check(bind(reserved.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "Bind failed");
+    int length = sizeof(address);
+    check(getsockname(reserved.value, reinterpret_cast<sockaddr*>(&address), &length) == 0, "Port not found");
+    return "http://127.0.0.1:" + std::to_string(ntohs(address.sin_port));
+}
+
+Result npm(const Cli& app, const std::string& url, const std::string& name = "chalk",
+           const std::string& version = "4.1.2", const std::string& suffix = "") {
+    Arguments arguments = {"--package", name, "--version", version};
+    arguments.insert(arguments.end(), {"--repository", url + suffix});
+    return app.run(arguments);
+}
+
+void data_cli_tests(TestSuite& suite, const Cli& app, const std::string& url) {
+    suite.run("CLI direct dependencies", [&] {
+        const auto result = npm(app, url);
         success(result);
-        check(result.output == "package=express\nrepository=https://registry.npmjs.org\n"
-            "test_mode=false\nversion=4.18.2\noutput=graph.svg\nascii=false\nfilter=\n", "Wrong configuration");
+        check(result.output == "package=chalk@4.1.2\ndirect_dependencies=2\n"
+            "ansi-styles=^4.1.0\nsupports-color=^7.1.0\n", "Wrong direct dependencies");
     });
-    suite.run("CLI flags and Unicode paths", [&] {
-        const auto output = app.directory / fs::u8path("граф с пробелами.svg");
-        const auto result = app.run({"--package", "A", "--version", "1.0.0", "--test-mode",
-            "--repository", (app.source / "examples/repository.json").u8string(),
-            "--ascii", "--filter", "B", "--output", output.u8string()});
-        contains(result, "test_mode=true");
-        contains(result, "ascii=true");
-        contains(result, output.u8string());
-        check(!fs::exists(output), "Unexpected SVG output");
+    suite.run("CLI leaf package", [&] {
+        contains(npm(app, url, "is-number", "7.0.0"), "direct_dependencies=0");
     });
-    suite.run("CLI argument error", [&] {
-        failure(app.run({"--package", "express", "--version", "invalid"}), "--version");
+    suite.run("CLI scoped package", [&] {
+        contains(npm(app, url, "@types/is-number", "7.0.5"), "package=@types/is-number@7.0.5");
     });
-    suite.run("CLI help", [&] {
+    suite.run("CLI missing package and version", [&] {
+        failure(npm(app, url, "absent", "1.0.0"), "HTTP 404");
+        failure(npm(app, url, "chalk", "999.0.0"), "HTTP 404");
+    });
+    suite.run("CLI server errors", [&] {
+        for (const auto suffix : {"/broken", "/wrong", "/error"}) {
+            failure(npm(app, url, "chalk", "4.1.2", suffix));
+        }
+    });
+    suite.run("CLI local repository and Unicode path", [&] {
+        const auto file = app.write("граф с пробелами.json", R"({"A":["B"],"B":[]})");
+        const auto result = app.run({"--package", "A", "--version", "1.0.0",
+                                    "--test-mode", "--repository", file.u8string()});
+        contains(result, "B=1.0.0");
+    });
+    suite.run("CLI invalid repositories", [&] {
+        for (const auto text : {"{", R"({"A":["B"]})", R"({"a":[]})", R"({"A":{}})"}) {
+            const auto file = app.write("invalid.json", text);
+            failure(app.run({"--package", "A", "--version", "1.0.0",
+                             "--test-mode", "--repository", file.u8string()}));
+        }
+    });
+    suite.run("CLI help and validation", [&] {
         contains(app.run({"--help"}), "--package");
+        failure(app.run({"--package", "chalk", "--version", "invalid"}), "--version");
     });
 }
 
@@ -168,7 +346,8 @@ int wmain(int argc, wchar_t* argv[]) {
         check(argc == 3, "Expected executable and source paths");
         Cli app(argv[1], argv[2]);
         TestSuite suite;
-        config_cli_tests(suite, app);
+        Registry registry;
+        data_cli_tests(suite, app, registry.url());
         return suite.finish();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
