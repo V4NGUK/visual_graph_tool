@@ -328,58 +328,93 @@ Package NpmRepository::resolve(const std::string& name, const std::string& requi
 
 namespace {
 
-struct Search {
+struct Dependencies {
     Resolve resolve;
     std::string filter;
-    GraphLimits limits;
-    DependencyGraph graph;
-    std::set<std::string> seen;
+    std::map<std::string, Package> packages;
     std::map<std::pair<std::string, std::string>, Package> cache;
 };
 
-Package load_package(Search& search, const std::string& name, const std::string& range) {
+Package load_package(Dependencies& source, const std::string& name, const std::string& range) {
     const auto key = std::make_pair(name, range);
-    if (search.cache.count(key) == 0) {
-        search.cache[key] = search.resolve(name, range);
+    if (source.cache.count(key) == 0) {
+        source.cache[key] = source.resolve(name, range);
     }
-    return search.cache.at(key);
+    return source.cache.at(key);
 }
 
-void add_to_level(Search& search, const Package& package, std::vector<Package>& level) {
-    const auto id = package_id(package);
+std::vector<std::string> dependencies(Dependencies& source, const std::string& id) {
+    std::vector<std::string> result;
+    for (const auto& [name, range] : source.packages.at(id).dependencies) {
+        if (excluded(name, source.filter)) continue;
+        const auto child = load_package(source, name, range);
+        if (excluded(child.name, source.filter)) continue;
+        const auto child_id = package_id(child);
+        if (std::find(result.begin(), result.end(), child_id) == result.end()) {
+            result.push_back(child_id);
+        }
+        source.packages.emplace(child_id, child);
+    }
+    return result;
+}
+
+using Neighbors = std::function<std::vector<std::string>(const std::string&)>;
+
+struct Search {
+    Neighbors neighbors;
+    GraphLimits limits;
+    DependencyGraph graph;
+    std::set<std::string> seen;
+};
+
+void add_to_level(Search& search, const std::string& id, std::vector<std::string>& level) {
     if (search.seen.count(id) != 0) return;
     if (search.seen.size() >= search.limits.max_nodes) {
         throw std::runtime_error("Превышен предел числа вершин графа");
     }
     search.seen.insert(id);
-    level.push_back(package);
+    level.push_back(id);
 }
 
-void expand(Search& search, const Package& package, std::vector<Package>& next) {
-    auto& edges = search.graph.edges[package_id(package)];
-    for (const auto& [name, range] : package.dependencies) {
-        if (excluded(name, search.filter)) continue;
-        const auto child = load_package(search, name, range);
-        if (excluded(child.name, search.filter)) continue;
-        const auto id = package_id(child);
-        if (std::find(edges.begin(), edges.end(), id) == edges.end()) {
-            edges.push_back(id);
-        }
-        add_to_level(search, child, next);
-    }
-}
-
-void visit_level(Search& search, const std::vector<Package>& level, std::size_t depth) {
+void visit_level(Search& search, const std::vector<std::string>& level, std::size_t depth) {
     if (level.empty()) return;
     if (depth > search.limits.max_depth) {
         throw std::runtime_error("Превышен предел глубины рекурсивного BFS");
     }
-    std::vector<Package> next;
-    for (const auto& package : level) {
-        search.graph.order.push_back(package_id(package));
-        expand(search, package, next);
+    std::vector<std::string> next;
+    for (const auto& id : level) {
+        search.graph.order.push_back(id);
+        auto& edges = search.graph.edges[id];
+        edges = search.neighbors(id);
+        for (const auto& child : edges) add_to_level(search, child, next);
     }
     visit_level(search, next, depth + 1);
+}
+
+DependencyGraph walk_graph(const std::string& root, Neighbors neighbors, GraphLimits limits) {
+    Search search;
+    search.neighbors = std::move(neighbors);
+    search.limits = limits;
+    search.graph.root = root;
+    std::vector<std::string> first_level;
+    add_to_level(search, root, first_level);
+    visit_level(search, first_level, 0);
+    return search.graph;
+}
+
+std::string find_target(const DependencyGraph& graph, const std::string& target) {
+    std::string result;
+    for (const auto& id : graph.order) {
+        if (id != target && id.substr(0, id.rfind('@')) != target) continue;
+        if (!result.empty()) {
+            throw std::runtime_error("--reverse: несколько версий пакета; укажите имя@версия");
+        }
+        result = id;
+    }
+    if (result.empty()) {
+        throw std::runtime_error("--reverse: пакет отсутствует в построенном графе: " + target);
+    }
+    return result;
 }
 
 void print_list(const std::vector<std::string>& names, std::ostream& output) {
@@ -401,17 +436,34 @@ bool excluded(const std::string& name, const std::string& filter) {
 }
 
 DependencyGraph build_graph(const Package& root, Resolve resolve, const std::string& filter, GraphLimits limits) {
-    Search search;
-    search.resolve = std::move(resolve);
-    search.filter = filter;
-    search.limits = limits;
-    search.graph.root = package_id(root);
-    if (excluded(root.name, filter)) return search.graph;
-    search.cache[{root.name, root.version}] = root;
-    std::vector<Package> first_level;
-    add_to_level(search, root, first_level);
-    visit_level(search, first_level, 0);
-    return search.graph;
+    const auto id = package_id(root);
+    if (excluded(root.name, filter)) return {id, {}, {}};
+    Dependencies source;
+    source.resolve = std::move(resolve);
+    source.filter = filter;
+    source.packages[id] = root;
+    source.cache[{root.name, root.version}] = root;
+    return walk_graph(id, [&](const std::string& package) { return dependencies(source, package); }, limits);
+}
+
+DependencyGraph reverse_graph(const DependencyGraph& graph, const std::string& target, GraphLimits limits) {
+    const auto id = find_target(graph, target);
+    std::map<std::string, std::vector<std::string>> parents;
+    for (const auto& parent : graph.order) {
+        parents[parent];
+        for (const auto& child : graph.edges.at(parent)) {
+            parents[child].push_back(parent);
+        }
+    }
+    return walk_graph(id, [&](const std::string& package) { return parents.at(package); }, limits);
+}
+
+void print_reverse(const DependencyGraph& graph, std::ostream& output) {
+    output << "package=" << graph.root << '\n';
+    output << "reverse_dependencies=" << graph.order.size() - 1 << '\n';
+    for (const auto& id : graph.order) {
+        if (id != graph.root) output << id << '\n';
+    }
 }
 
 void print_graph(const DependencyGraph& graph, std::ostream& output) {

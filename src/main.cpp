@@ -11,11 +11,19 @@ namespace {
 
 using namespace graph_tool;
 
+void show_graph(const Config& config, const DependencyGraph& graph) {
+    if (config.reverse.empty()) {
+        print_graph(graph, std::cout);
+    } else {
+        print_reverse(reverse_graph(graph, config.reverse), std::cout);
+    }
+}
+
 void show_result(const Config& config, const Package& root, const Resolve& resolve) {
     if (config.direct) {
         print_dependencies(root, std::cout);
     } else {
-        print_graph(build_graph(root, resolve, config.filter), std::cout);
+        show_graph(config, build_graph(root, resolve, config.filter));
     }
 }
 
@@ -39,7 +47,7 @@ void process(const Config& config) {
     if (config.help) {
         print_help(std::cout);
     } else if (!config.direct && excluded(config.package, config.filter)) {
-        print_graph({config.package + '@' + config.version, {}, {}}, std::cout);
+        show_graph(config, {config.package + '@' + config.version, {}, {}});
     } else if (config.test_mode) {
         analyze_test_file(config);
     } else {

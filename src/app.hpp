@@ -22,6 +22,7 @@ struct Config {
     std::string filter;
     bool help = false;
     bool direct = false;
+    std::string reverse;
 };
 
 Config parse_arguments(const std::vector<std::string>& arguments);
@@ -119,5 +120,7 @@ bool excluded(const std::string& name, const std::string& filter);
 DependencyGraph build_graph(const Package& root, Resolve resolve,
                             const std::string& filter = "", GraphLimits limits = {});
 void print_graph(const DependencyGraph& graph, std::ostream& output);
+DependencyGraph reverse_graph(const DependencyGraph& graph, const std::string& target, GraphLimits limits = {});
+void print_reverse(const DependencyGraph& graph, std::ostream& output);
 
 }

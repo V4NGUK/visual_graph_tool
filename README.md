@@ -1,6 +1,6 @@
 # Инструмент визуализации графа зависимостей
 
-Практическая работа № 2, вариант 8. Реализованы этапы 1–3.
+Практическая работа № 2, вариант 8. Реализованы этапы 1–4.
 
 Приложение на C++17 получает метаданные npm и строит граф зависимостей
 рекурсивным BFS. Поддерживаются выбор версий, фильтрация и циклы.
@@ -32,10 +32,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
 .\run.bat --package chalk --version 4.1.2
 ```
 
-Проверка цикла без интернета:
+Обратные зависимости и цикл без интернета:
 
 ```powershell
-.\run.bat --package X --version 1.0.0 --test-mode --repository .\examples\repository.json
+.\run.bat --package A --version 1.0.0 --test-mode --repository .\examples\repository.json --reverse D
+.\run.bat --package X --version 1.0.0 --test-mode --repository .\examples\repository.json --reverse X
 ```
 
 ## Параметры
@@ -47,6 +48,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
 | `--repository` | URL реестра или тестовый JSON-файл | `https://registry.npmjs.org` |
 | `--test-mode` | Использовать тестовый репозиторий | Выключен |
 | `--direct` | Вывести только прямые зависимости | Выключен |
+| `--reverse` | Пакет для поиска обратных зависимостей | Не задан |
 | `--filter` | Исключить пакеты с указанной подстрокой в имени | Пустая строка |
 | `--output` | Имя будущего SVG-файла, этап 5 | `graph.svg` |
 | `--ascii` | Режим ASCII-дерева, этап 5 | Выключен |
@@ -55,6 +57,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
 В тестовых файлах имена пакетов состоят из заглавных латинских букв.
 В `examples/repository.json`: A — ветвление, X — цикл, I — изолированная вершина, S — петля.
 Источники метаданных перечислены в `examples/metadata.json`.
+
+`--reverse` ищет прямые и косвенные обратные зависимости внутри графа `--package`.
+Порядок вывода — BFS, без самого искомого пакета. При нескольких версиях укажи
+`имя@версия`. Режим несовместим с `--direct`; фильтр применяется до поиска.
 
 Обрабатывается поле `dependencies`. Для каждого диапазона выбирается наибольшая
 подходящая версия. Внешние Git- и файловые зависимости не поддерживаются.

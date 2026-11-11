@@ -387,6 +387,56 @@ void graph_cli_tests(TestSuite& suite, const Cli& app, const std::string& url) {
     });
 }
 
+void reverse_cli_tests(TestSuite& suite, const Cli& app, const std::string& url) {
+    suite.run("CLI reverse diamond", [&] {
+        const auto result = graph(app, "A", {"--reverse", "D"});
+        success(result);
+        check(result.output == "package=D@1.0.0\nreverse_dependencies=3\nB@1.0.0\nC@1.0.0\nA@1.0.0\n",
+              "Wrong reverse dependencies");
+    });
+    suite.run("CLI reverse cycle", [&] {
+        const auto result = graph(app, "X", {"--reverse=X"});
+        success(result);
+        check(result.output == "package=X@1.0.0\nreverse_dependencies=2\nZ@1.0.0\nY@1.0.0\n", "Wrong cycle");
+    });
+    suite.run("CLI reverse leaf, root, isolated package and self loop", [&] {
+        contains(graph(app, "A", {"--reverse", "B"}), "reverse_dependencies=1\nA@1.0.0\n");
+        for (const auto name : {"A", "I", "S"}) {
+            contains(graph(app, name, {"--reverse", name}), "reverse_dependencies=0\n");
+        }
+    });
+    suite.run("CLI reverse filter and exact target", [&] {
+        contains(graph(app, "A", {"--reverse", "D@1.0.0", "--filter", "B"}),
+                 "reverse_dependencies=2\nC@1.0.0\nA@1.0.0\n");
+        failure(graph(app, "A", {"--reverse", "D", "--filter", "D"}), "--reverse");
+        failure(graph(app, "A", {"--reverse", "D", "--filter", "A"}), "--reverse");
+    });
+    suite.run("CLI absent reverse targets", [&] {
+        for (const auto name : {"MISSING", "I", "D@2.0.0"}) {
+            failure(graph(app, "A", {"--reverse", name}), "--reverse");
+        }
+    });
+    suite.run("CLI invalid reverse options", [&] {
+        failure(graph(app, "A", {"--reverse"}), "--reverse");
+        failure(graph(app, "A", {"--reverse="}), "--reverse");
+        failure(graph(app, "A", {"--reverse", "d"}), "--reverse");
+        failure(graph(app, "A", {"--reverse", "D@latest"}), "--reverse");
+        failure(graph(app, "A", {"--reverse", "D", "--direct"}), "--reverse");
+        failure(graph(app, "A", {"--reverse=D", "--reverse=B"}), "--reverse");
+    });
+    suite.run("CLI reverse npm dependencies over HTTP", [&] {
+        const auto result = app.run({"--package", "chalk", "--version", "4.1.2", "--repository", url,
+                                     "--reverse", "color-name"});
+        success(result);
+        check(result.output == "package=color-name@1.1.4\nreverse_dependencies=3\n"
+              "color-convert@2.0.1\nansi-styles@4.3.0\nchalk@4.1.2\n", "Wrong npm reverse graph");
+    });
+    suite.run("CLI reverse scoped target", [&] {
+        contains(app.run({"--package", "@types/is-number", "--version", "7.0.5", "--repository", url,
+                          "--reverse", "@types/is-number@7.0.5"}), "reverse_dependencies=0\n");
+    });
+}
+
 int wmain(int argc, wchar_t* argv[]) {
     try {
         check(argc == 3, "Expected executable and source paths");
@@ -395,6 +445,7 @@ int wmain(int argc, wchar_t* argv[]) {
         Registry registry;
         data_cli_tests(suite, app, registry.url());
         graph_cli_tests(suite, app, registry.url());
+        reverse_cli_tests(suite, app, registry.url());
         return suite.finish();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

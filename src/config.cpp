@@ -123,6 +123,24 @@ void validate_output(const std::string& output) {
     }
 }
 
+void validate_reverse(const Config& config) {
+    if (config.reverse.empty()) return;
+    require(!config.direct, "--reverse: нельзя использовать вместе с --direct");
+    Config target = config;
+    target.package = config.reverse;
+    const auto separator = config.reverse.rfind('@');
+    if (separator != std::string::npos && separator != 0) {
+        target.package = config.reverse.substr(0, separator);
+        target.version = config.reverse.substr(separator + 1);
+    }
+    try {
+        validate_package(target);
+        validate_version(target.version);
+    } catch (const std::invalid_argument&) {
+        throw std::invalid_argument("--reverse: неверное имя или точная версия пакета");
+    }
+}
+
 }
 
 void validate_config(const Config& config) {
@@ -134,6 +152,7 @@ void validate_config(const Config& config) {
             "--filter: подстрока не должна содержать пробелы и управляющие символы");
     require(config.filter.size() <= max_package_length,
             "--filter: подстрока не должна превышать 214 байт");
+    validate_reverse(config);
 }
 
 namespace {
@@ -180,6 +199,9 @@ void set_value(Config& config, const std::string& name,
         config.output = read_value(arguments, index);
     } else if (name == "--filter") {
         config.filter = read_value(arguments, index);
+    } else if (name == "--reverse") {
+        config.reverse = read_value(arguments, index);
+        require(!config.reverse.empty(), "--reverse: необходимо указать пакет");
     } else {
         throw std::invalid_argument("неизвестный параметр: " + name);
     }
@@ -222,7 +244,7 @@ void print_config(const Config& config, std::ostream& output) {
 
 void print_help(std::ostream& output) {
     output << R"(Инструмент визуализации графа зависимостей npm
-Вариант 8. Этапы 2 и 3: прямые зависимости и рекурсивный BFS.
+Вариант 8. Этапы 1–4: конфигурация, зависимости, BFS и обратные зависимости.
 
 Запуск: visual_graph_tool --package ИМЯ --version ВЕРСИЯ [опции]
 
@@ -235,10 +257,13 @@ void print_help(std::ostream& output) {
   --ascii             Включить режим ASCII-дерева.
   --filter ПОДСТРОКА  Подстрока исключаемых пакетов; по умолчанию пустая.
   --direct            Вывести только прямые зависимости, как на этапе 2.
+  --reverse ПАКЕТ     Обратные зависимости пакета в построенном графе.
+                     Можно уточнить версию: имя@версия. Несовместим с --direct.
   --help, -h          Показать справку.
 
 Значения можно задавать через пробел или =. Флаги значений не принимают.
 По умолчанию выводятся граф и порядок BFS. --direct включает вывод этапа 2.
+--reverse выводит прямые и косвенные обратные зависимости в порядке BFS, без самого пакета.
 Обрабатывается поле dependencies; devDependencies и peerDependencies не обходятся.
 Изображение и ASCII-дерево появятся на этапе 5.
 )";

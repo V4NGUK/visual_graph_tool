@@ -445,6 +445,107 @@ void precedence_tests(TestSuite& suite) {
     }
 }
 
+void reverse_configuration_tests(TestSuite& suite) {
+    suite.run("reverse target and exact target version", [] {
+        check(parse_arguments(with_value("--reverse", "chalk")).reverse == "chalk", "Target lost");
+        check(parse_arguments({"--package=x", "--version=1.0.0", "--reverse=@types/node@2.0.0"}).reverse ==
+              "@types/node@2.0.0", "Scoped target lost");
+    });
+    suite.run("invalid reverse option values", [] {
+        for (const auto value : {"", "bad name", "x@", "x@latest", "x@01.0.0", "@scope", "x@@1.0.0"}) {
+            expect_error(with_value("--reverse", value), "--reverse");
+        }
+        expect_error({"--reverse"}, "--reverse");
+        expect_error({"--reverse", "--ascii"}, "--reverse");
+        expect_error({"--reverse=x", "--reverse=y"}, "--reverse");
+    });
+    suite.run("reverse and direct modes are incompatible", [] {
+        auto arguments = with_value("--reverse", "chalk");
+        arguments.push_back("--direct");
+        expect_error(arguments, "--reverse");
+    });
+}
+
+void reverse_traversal_tests(TestSuite& suite) {
+    suite.run("reverse diamond uses BFS and excludes the target from output", [] {
+        const auto graph = reverse_graph(test_graph("A"), "D");
+        check(graph.order == std::vector<std::string>{"D@1.0.0", "B@1.0.0", "C@1.0.0", "A@1.0.0"},
+              "Wrong reverse BFS order");
+        check(graph.edges.at("D@1.0.0") == std::vector<std::string>{"B@1.0.0", "C@1.0.0"}, "Edges not reversed");
+        std::ostringstream output;
+        print_reverse(graph, output);
+        check(output.str() == "package=D@1.0.0\nreverse_dependencies=3\nB@1.0.0\nC@1.0.0\nA@1.0.0\n",
+              "Wrong reverse output");
+    });
+    suite.run("reverse chain and root without parents", [] {
+        const auto graph = test_graph("A");
+        check(reverse_graph(graph, "B").order == std::vector<std::string>{"B@1.0.0", "A@1.0.0"}, "Wrong parent");
+        check(reverse_graph(graph, "A").order.size() == 1, "Root has unexpected parents");
+    });
+    suite.run("reverse cycle terminates and visits every parent once", [] {
+        const auto graph = reverse_graph(test_graph("X"), "X");
+        check(graph.order == std::vector<std::string>{"X@1.0.0", "Z@1.0.0", "Y@1.0.0"}, "Wrong cycle order");
+        check(graph.edges.at("Y@1.0.0") == std::vector<std::string>{"X@1.0.0"}, "Cycle edge lost");
+    });
+    suite.run("reverse self loop and isolated package have no other parents", [] {
+        for (const std::string name : {"S", "I"}) {
+            std::ostringstream output;
+            print_reverse(reverse_graph(test_graph(name), name), output);
+            check(output.str() == "package=" + name + "@1.0.0\nreverse_dependencies=0\n", "Target counted itself");
+        }
+    });
+    suite.run("reverse search respects filtering", [] {
+        const auto graph = reverse_graph(test_graph("A", "B"), "D");
+        check(graph.order == std::vector<std::string>{"D@1.0.0", "C@1.0.0", "A@1.0.0"}, "Filter ignored");
+        expect_error([] { reverse_graph(test_graph("A", "D"), "D"); });
+        expect_error([] { reverse_graph(test_graph("A", "A"), "A"); });
+    });
+    suite.run("reverse search rejects absent and unreachable targets", [] {
+        expect_error([] { reverse_graph(test_graph("A"), "MISSING"); });
+        expect_error([] { reverse_graph(test_graph("A"), "I"); });
+        expect_error([] { reverse_graph(test_graph("A"), "D@2.0.0"); });
+    });
+    suite.run("reverse BFS enforces depth and node limits", [] {
+        expect_error([] { reverse_graph(test_graph("A"), "D", {2, 10}); });
+        expect_error([] { reverse_graph(test_graph("A"), "D", {10, 1}); });
+    });
+}
+
+void reverse_version_tests(TestSuite& suite) {
+    suite.run("reverse targets distinguish multiple versions", [] {
+        const auto graph = build_graph({"A", "1.0.0", {{"B", "1.0.0"}, {"C", "1.0.0"}}},
+            [](const auto& name, const auto& version) {
+                if (name == "B") return Package{name, version, {{"D", "1.0.0"}}};
+                if (name == "C") return Package{name, version, {{"D", "2.0.0"}}};
+                return Package{name, version, {}};
+            });
+        expect_error([&] { reverse_graph(graph, "D"); });
+        check(reverse_graph(graph, "D@1.0.0").order ==
+              std::vector<std::string>{"D@1.0.0", "B@1.0.0", "A@1.0.0"}, "Wrong first version parents");
+        check(reverse_graph(graph, "D@2.0.0").order ==
+              std::vector<std::string>{"D@2.0.0", "C@1.0.0", "A@1.0.0"}, "Wrong second version parents");
+    });
+    suite.run("reverse traversal preserves different versions of the same parent", [] {
+        const auto graph = build_graph({"R", "1.0.0", {{"A", "1.0.0"}, {"B", "1.0.0"}}},
+            [](const auto& name, const auto& version) {
+                if (name == "A") return Package{name, version, {{"P", "1.0.0"}}};
+                if (name == "B") return Package{name, version, {{"P", "2.0.0"}}};
+                if (name == "P") return Package{name, version, {{"T", "1.0.0"}}};
+                return Package{name, version, {}};
+            });
+        check(reverse_graph(graph, "T").order ==
+              std::vector<std::string>{"T@1.0.0", "P@1.0.0", "P@2.0.0", "A@1.0.0", "B@1.0.0", "R@1.0.0"},
+              "Parent versions were merged");
+    });
+    suite.run("reverse scoped names support optional versions", [] {
+        const auto graph = build_graph({"root", "1.0.0", {{"@scope/leaf", "2.0.0"}}},
+            [](const auto& name, const auto& version) { return Package{name, version, {}}; });
+        const auto expected = std::vector<std::string>{"@scope/leaf@2.0.0", "root@1.0.0"};
+        check(reverse_graph(graph, "@scope/leaf").order == expected, "Scoped name rejected");
+        check(reverse_graph(graph, "@scope/leaf@2.0.0").order == expected, "Scoped version rejected");
+    });
+}
+
 int main() {
     TestSuite suite;
     Fixture fixture;
@@ -461,5 +562,8 @@ int main() {
     npm_graph_test(suite);
     range_tests(suite);
     precedence_tests(suite);
+    reverse_configuration_tests(suite);
+    reverse_traversal_tests(suite);
+    reverse_version_tests(suite);
     return suite.finish();
 }
