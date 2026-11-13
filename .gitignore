@@ -10,6 +10,7 @@
 *.pdb
 *.ilk
 *.svg
+*.dot
 *.zip
 *.7z
 *.log

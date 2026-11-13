@@ -244,7 +244,7 @@ void print_config(const Config& config, std::ostream& output) {
 
 void print_help(std::ostream& output) {
     output << R"(Инструмент визуализации графа зависимостей npm
-Вариант 8. Этапы 1–4: конфигурация, зависимости, BFS и обратные зависимости.
+Вариант 8. Этапы 1–5: зависимости, BFS, обратные зависимости и визуализация.
 
 Запуск: visual_graph_tool --package ИМЯ --version ВЕРСИЯ [опции]
 
@@ -265,7 +265,9 @@ void print_help(std::ostream& output) {
 По умолчанию выводятся граф и порядок BFS. --direct включает вывод этапа 2.
 --reverse выводит прямые и косвенные обратные зависимости в порядке BFS, без самого пакета.
 Обрабатывается поле dependencies; devDependencies и peerDependencies не обходятся.
-Изображение и ASCII-дерево появятся на этапе 5.
+Полный граф сохраняется в SVG и соседний DOT-файл. Нужен Graphviz (dot).
+--ascii заменяет список рёбер деревом; [cycle] означает цикл, [seen] — повтор.
+Режимы --direct и --reverse только печатают результат, без SVG и ASCII-дерева.
 )";
 }
 

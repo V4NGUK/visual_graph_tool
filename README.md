@@ -1,23 +1,15 @@
-# Инструмент визуализации графа зависимостей
+# Граф зависимостей npm
 
-Практическая работа № 2, вариант 8. Реализованы этапы 1–4.
-
-Приложение на C++17 получает метаданные npm и строит граф зависимостей
-рекурсивным BFS. Поддерживаются выбор версий, фильтрация и циклы.
-Режим `--direct` выводит только прямые зависимости, как на этапе 2.
+Практическая работа № 2, вариант 8. Этапы 1–5 на C++17:
+метаданные, рекурсивный BFS, обратные зависимости, Graphviz, SVG и ASCII-дерево.
 
 ## Сборка и тесты
 
-Нужны Windows, компилятор C++17 и CMake.
-Команды выполняются в PowerShell из папки проекта.
+Нужны Windows, C++17, CMake и [Graphviz](https://graphviz.org/download/).
+Папку Graphviz `bin` добавь в `PATH` перед сборкой.
+Подготовленная локальная копия в `build/tools/graphviz` также находится автоматически.
 
-Сборка:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
-```
-
-Сборка и запуск всех тестов на C++:
+В терминале PowerShell из папки проекта:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
@@ -25,43 +17,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
 
 ## Запуск
 
-Прямые зависимости и полный граф:
-
 ```powershell
-.\run.bat --package chalk --version 4.1.2 --direct
-.\run.bat --package chalk --version 4.1.2
+.\run.bat --package chalk --version 4.1.2 --ascii --output chalk.svg
+.\run.bat --package ansi-styles --version 4.3.0 --ascii --output ansi-styles.svg
+.\run.bat --package is-number --version 7.0.0 --ascii --output is-number.svg
 ```
 
-Обратные зависимости и цикл без интернета:
+Создаются SVG и соседний `.dot` с тем же именем. `--ascii` выводит дерево;
+`[cycle]` обозначает цикл, `[seen]` — уже раскрытый узел.
+`--direct` и `--reverse ИМЯ` выводят только текст без создания изображения.
+Справка: `.\run.bat --help`.
 
-```powershell
-.\run.bat --package A --version 1.0.0 --test-mode --repository .\examples\repository.json --reverse D
-.\run.bat --package X --version 1.0.0 --test-mode --repository .\examples\repository.json --reverse X
-```
+Учитывается поле `dependencies`; выбирается наибольшая подходящая версия.
+Обратные зависимости ищутся внутри графа исходного пакета.
 
-## Параметры
+## Материалы для защиты
 
-| Опция | Назначение | По умолчанию |
-| --- | --- | --- |
-| `--package` | Имя пакета | Обязательно |
-| `--version` | Точная версия пакета | Обязательно |
-| `--repository` | URL реестра или тестовый JSON-файл | `https://registry.npmjs.org` |
-| `--test-mode` | Использовать тестовый репозиторий | Выключен |
-| `--direct` | Вывести только прямые зависимости | Выключен |
-| `--reverse` | Пакет для поиска обратных зависимостей | Не задан |
-| `--filter` | Исключить пакеты с указанной подстрокой в имени | Пустая строка |
-| `--output` | Имя будущего SVG-файла, этап 5 | `graph.svg` |
-| `--ascii` | Режим ASCII-дерева, этап 5 | Выключен |
-
-Справка: `.\run.bat --help`. При ошибке программа возвращает код `2`.
-В тестовых файлах имена пакетов состоят из заглавных латинских букв.
-В `examples/repository.json`: A — ветвление, X — цикл, I — изолированная вершина, S — петля.
-Источники метаданных перечислены в `examples/metadata.json`.
-
-`--reverse` ищет прямые и косвенные обратные зависимости внутри графа `--package`.
-Порядок вывода — BFS, без самого искомого пакета. При нескольких версиях укажи
-`имя@версия`. Режим несовместим с `--direct`; фильтр применяется до поиска.
-
-Обрабатывается поле `dependencies`. Для каждого диапазона выбирается наибольшая
-подходящая версия. Внешние Git- и файловые зависимости не поддерживаются.
-SVG-файл и ASCII-дерево предусмотрены на этапе 5.
+1. [Устройство проекта и все параметры](docs/01_project.txt).
+2. [Алгоритмы и разбор кода](docs/02_algorithms.txt).
+3. [Демонстрация, сравнение с npm и вопросы](docs/03_defense.txt).

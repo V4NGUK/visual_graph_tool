@@ -546,6 +546,79 @@ void reverse_version_tests(TestSuite& suite) {
     });
 }
 
+void visualization_tests(TestSuite& suite) {
+    suite.run("DOT preserves a diamond and highlights its root", [] {
+        std::ostringstream output;
+        print_dot(test_graph("A"), output);
+        const auto dot = output.str();
+        check(dot.find("digraph dependencies {") == 0, "Missing digraph");
+        check(dot.find("\"A@1.0.0\" [fillcolor=") != std::string::npos, "Root not highlighted");
+        for (const auto* edge : {"\"A@1.0.0\" -> \"B@1.0.0\"", "\"A@1.0.0\" -> \"C@1.0.0\"",
+                                 "\"B@1.0.0\" -> \"D@1.0.0\"", "\"C@1.0.0\" -> \"D@1.0.0\""}) {
+            check(dot.find(edge) != std::string::npos, "Missing edge");
+        }
+    });
+    suite.run("DOT preserves cycles and isolated nodes", [] {
+        std::ostringstream cycle, isolated, loop;
+        print_dot(test_graph("X"), cycle);
+        print_dot(test_graph("I"), isolated);
+        print_dot(test_graph("S"), loop);
+        check(cycle.str().find("\"Z@1.0.0\" -> \"X@1.0.0\"") != std::string::npos, "Cycle lost");
+        check(isolated.str().find("\"I@1.0.0\"") != std::string::npos, "Isolated node lost");
+        check(isolated.str().find(" -> ") == std::string::npos, "Unexpected edge");
+        check(loop.str().find("\"S@1.0.0\" -> \"S@1.0.0\"") != std::string::npos, "Loop lost");
+    });
+    suite.run("DOT escapes labels", [] {
+        const std::string id = "a\"b\\c\nd\re";
+        std::ostringstream output;
+        print_dot({id, {id}, {}}, output);
+        check(output.str().find("\"a\\\"b\\\\c\\nd\\re\"") != std::string::npos, "Unsafe label");
+    });
+    suite.run("DOT respects filters", [] {
+        std::ostringstream output;
+        print_dot(test_graph("A", "B"), output);
+        check(output.str().find("B@1.0.0") == std::string::npos, "Filtered node remains");
+        check(output.str().find("D@1.0.0") != std::string::npos, "Reachable node lost");
+    });
+    suite.run("ASCII diamond distinguishes shared dependencies", [] {
+        std::ostringstream output;
+        print_ascii(test_graph("A"), output);
+        check(output.str() == "A@1.0.0\n|-- B@1.0.0\n|   `-- D@1.0.0\n"
+                              "`-- C@1.0.0\n    `-- D@1.0.0 [seen]\n", "Wrong shared tree");
+    });
+    suite.run("ASCII cycles terminate", [] {
+        std::ostringstream output;
+        print_ascii(test_graph("X"), output);
+        check(output.str() == "X@1.0.0\n`-- Y@1.0.0\n    `-- Z@1.0.0\n"
+                              "        `-- X@1.0.0 [cycle]\n", "Wrong cycle tree");
+    });
+    suite.run("ASCII self loop is not expanded twice", [] {
+        std::ostringstream output;
+        print_ascii(test_graph("S"), output);
+        check(output.str() == "S@1.0.0\n`-- S@1.0.0 [cycle]\n", "Wrong loop tree");
+    });
+    suite.run("ASCII isolated node", [] {
+        std::ostringstream output;
+        print_ascii(test_graph("I"), output);
+        check(output.str() == "I@1.0.0\n", "Wrong isolated tree");
+    });
+    suite.run("Empty graph has no phantom root", [] {
+        std::ostringstream ascii, dot;
+        const auto graph = test_graph("A", "A");
+        print_ascii(graph, ascii);
+        print_dot(graph, dot);
+        check(ascii.str() == "(empty)\n", "Wrong empty tree");
+        check(dot.str().find("A@1.0.0") == std::string::npos, "Filtered root remains");
+    });
+    suite.run("ASCII retains separate package versions", [] {
+        const DependencyGraph graph{"R", {"R", "P@1.0.0", "P@2.0.0"},
+                                    {{"R", {"P@1.0.0", "P@2.0.0"}}}};
+        std::ostringstream output;
+        print_ascii(graph, output);
+        check(output.str() == "R\n|-- P@1.0.0\n`-- P@2.0.0\n", "Versions were merged");
+    });
+}
+
 int main() {
     TestSuite suite;
     Fixture fixture;
@@ -565,5 +638,6 @@ int main() {
     reverse_configuration_tests(suite);
     reverse_traversal_tests(suite);
     reverse_version_tests(suite);
+    visualization_tests(suite);
     return suite.finish();
 }

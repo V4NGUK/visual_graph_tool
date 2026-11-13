@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(visual_graph_tool VERSION 0.4.0 LANGUAGES CXX)
+project(visual_graph_tool VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,8 +14,14 @@ if(WIN32)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-add_library(graph_tool src/config.cpp src/data.cpp src/graph.cpp)
+file(GLOB LOCAL_GRAPHVIZ "${PROJECT_SOURCE_DIR}/build/tools/graphviz/*/bin")
+find_program(GRAPHVIZ_DOT NAMES dot HINTS ${LOCAL_GRAPHVIZ} "$ENV{ProgramFiles}/Graphviz/bin")
+
+add_library(graph_tool src/config.cpp src/data.cpp src/graph.cpp src/visualization.cpp)
 target_include_directories(graph_tool PUBLIC src)
+if(GRAPHVIZ_DOT)
+    target_compile_definitions(graph_tool PRIVATE GRAPHVIZ_DOT_PATH="${GRAPHVIZ_DOT}")
+endif()
 if(WIN32)
     target_link_libraries(graph_tool PRIVATE winhttp)
 endif()

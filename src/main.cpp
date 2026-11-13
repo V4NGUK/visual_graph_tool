@@ -13,7 +13,12 @@ using namespace graph_tool;
 
 void show_graph(const Config& config, const DependencyGraph& graph) {
     if (config.reverse.empty()) {
-        print_graph(graph, std::cout);
+        save_visualization(graph, config.output);
+        if (config.ascii) {
+            print_ascii(graph, std::cout);
+        } else {
+            print_graph(graph, std::cout);
+        }
     } else {
         print_reverse(reverse_graph(graph, config.reverse), std::cout);
     }

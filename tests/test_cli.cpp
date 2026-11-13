@@ -380,10 +380,71 @@ void graph_cli_tests(TestSuite& suite, const Cli& app, const std::string& url) {
         contains(result, "nodes=6\nedges=5\n");
         contains(result, "color-name@1.1.4 -> -");
     });
-    suite.run("CLI stage 5 output is not created", [&] {
-        const auto output = app.directory / fs::u8path("граф.svg");
-        success(graph(app, "X", {"--ascii", "--output", output.u8string()}));
-        check(!fs::exists(output), "Unexpected SVG output");
+}
+
+struct GraphvizOverride {
+    std::optional<std::wstring> previous;
+
+    explicit GraphvizOverride(const fs::path& path) {
+        std::wstring value(32768, L'\0');
+        const auto size = GetEnvironmentVariableW(L"GRAPHVIZ_DOT", value.data(), static_cast<DWORD>(value.size()));
+        if (size > 0 && size < value.size()) previous = value.substr(0, size);
+        check(SetEnvironmentVariableW(L"GRAPHVIZ_DOT", path.c_str()), "Cannot set Graphviz override");
+    }
+
+    ~GraphvizOverride() {
+        SetEnvironmentVariableW(L"GRAPHVIZ_DOT", previous ? previous->c_str() : nullptr);
+    }
+};
+
+void visualization_cli_tests(TestSuite& suite, const Cli& app) {
+    suite.run("CLI writes SVG and DOT with Unicode and spaces", [&] {
+        const auto svg = app.directory / fs::u8path("граф с пробелами & знаком.svg");
+        auto dot = svg;
+        dot.replace_extension(".dot");
+        contains(graph(app, "X", {"--ascii", "--output", svg.u8string()}), "X@1.0.0 [cycle]");
+        const auto image = read_file(svg);
+        check(image.find("<svg") != std::string::npos, "Missing SVG");
+        check(image.find("Z@1.0.0") != std::string::npos, "Missing SVG node");
+        check(read_file(dot).find("\"Z@1.0.0\" -> \"X@1.0.0\"") != std::string::npos, "Lost DOT edge");
+        success(graph(app, "I", {"--output", svg.u8string()}));
+        check(read_file(svg).find("X@1.0.0") == std::string::npos, "Old SVG was not replaced");
+        check(read_file(dot).find("I@1.0.0") != std::string::npos, "DOT was not replaced");
+    });
+    suite.run("CLI ASCII shared dependency and filtered root", [&] {
+        contains(graph(app, "A", {"--ascii"}), "D@1.0.0 [seen]");
+        const auto result = graph(app, "A", {"--ascii", "--filter", "A"});
+        success(result);
+        check(result.output == "(empty)\n", "Wrong empty ASCII output");
+        check(read_file(app.directory / "graph.svg").find("<svg") != std::string::npos, "Empty SVG missing");
+    });
+    suite.run("CLI missing Graphviz preserves existing files", [&] {
+        const auto svg = app.write("preserved.svg", "old svg");
+        const auto dot = app.write("preserved.dot", "old dot");
+        GraphvizOverride override(app.directory / "absent-dot.exe");
+        failure(graph(app, "A", {"--output", svg.u8string()}), "Graphviz");
+        check(read_file(svg) == "old svg" && read_file(dot) == "old dot", "Previous output was damaged");
+        for (const auto& entry : fs::directory_iterator(app.directory)) {
+            check(!entry.is_directory(), "Temporary files were not removed");
+        }
+    });
+    suite.run("CLI handles Graphviz failure", [&] {
+        GraphvizOverride override(fs::path(app.directory).parent_path() / "cli_tests.exe");
+        failure(graph(app, "A"), "Graphviz");
+    });
+    suite.run("CLI rejects a directory in place of DOT", [&] {
+        const auto directory = app.directory / "blocked.dot";
+        fs::create_directory(directory);
+        const auto result = graph(app, "A", {"--output", (app.directory / "blocked.svg").u8string()});
+        fs::remove(directory);
+        failure(result, "DOT");
+    });
+    suite.run("CLI text-only modes do not need Graphviz", [&] {
+        GraphvizOverride override(app.directory / "absent-dot.exe");
+        const auto svg = app.directory / "text-only.svg";
+        success(graph(app, "A", {"--direct", "--output", svg.u8string()}));
+        success(graph(app, "A", {"--reverse", "D", "--output", svg.u8string()}));
+        check(!fs::exists(svg), "Text-only mode created SVG");
     });
 }
 
@@ -446,6 +507,7 @@ int wmain(int argc, wchar_t* argv[]) {
         data_cli_tests(suite, app, registry.url());
         graph_cli_tests(suite, app, registry.url());
         reverse_cli_tests(suite, app, registry.url());
+        visualization_cli_tests(suite, app);
         return suite.finish();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

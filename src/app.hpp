@@ -122,5 +122,8 @@ DependencyGraph build_graph(const Package& root, Resolve resolve,
 void print_graph(const DependencyGraph& graph, std::ostream& output);
 DependencyGraph reverse_graph(const DependencyGraph& graph, const std::string& target, GraphLimits limits = {});
 void print_reverse(const DependencyGraph& graph, std::ostream& output);
+void print_dot(const DependencyGraph& graph, std::ostream& output);
+void print_ascii(const DependencyGraph& graph, std::ostream& output);
+void save_visualization(const DependencyGraph& graph, const std::string& filename);
 
 }
